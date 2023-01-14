@@ -8,76 +8,118 @@ secrets:
 
 services:
   sentinel:
-    image: sorintlab/stolon:master-pg10
-    command: gosu stolon stolon-sentinel --cluster-name stolon-cluster --store-backend=etcdv3 --store-endpoints http://etcd-00:2379,http://etcd-01:2379,http://etcd-02:2379 --log-level debug
+    image: sorintlab/stolon:master-pg14
+    command: gosu stolon stolon-sentinel --cluster-name stolon-cluster --store-backend=etcdv3 --store-endpoints http://etcd-00:2379 --log-level info
+    environment:
+      STOLONCTL_CLUSTER_NAME: stolon-cluster
+      STOLONCTL_STORE_BACKEND: etcdv3
+      STOLONCTL_STORE_ENDPOINTS: http://etcd-00:2379
     networks:
       - etcd_etcd
       - pgdb
     deploy:
-      replicas: 2
+      replicas: 1
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
       update_config:
-        parallelism: 1
+        parallelism: 2
         delay: 30s
         order: stop-first
         failure_action: pause
 
-  keeper1:
-    image: sorintlab/stolon:master-pg10
-    hostname: keeper1
+  stolon-keeper-1:
+    image: sorintlab/stolon:master-pg14
+    hostname: stolon-keeper-1
     environment:
-      - PGDATA=/var/lib/postgresql/data
+      PGDATA: /var/lib/postgresql/data
+      STOLONCTL_CLUSTER_NAME: stolon-cluster
+      STOLONCTL_STORE_BACKEND: etcdv3
+      STOLONCTL_STORE_ENDPOINTS: http://etcd-00:2379
     volumes:
-      - pgkeeper1:/var/lib/postgresql/data
+      - pgstolon-keeper-1:/var/lib/postgresql/data
     secrets:
       - pgsql
       - pgsql_repl
-    command: gosu stolon stolon-keeper --pg-listen-address keeper1 --pg-repl-username replication --uid keeper1 --pg-su-username postgres --pg-su-passwordfile /run/secrets/pgsql --pg-repl-passwordfile /run/secrets/pgsql_repl --data-dir /var/lib/postgresql/data --cluster-name stolon-cluster --store-backend=etcdv3 --store-endpoints http://etcd-00:2379,http://etcd-01:2379,http://etcd-02:2379 --log-level debug
+    command: gosu stolon stolon-keeper --pg-listen-address stolon-keeper-1 --pg-repl-username replication --uid stolonkeeper1 --pg-su-username postgres --pg-su-passwordfile /run/secrets/pgsql --pg-repl-passwordfile /run/secrets/pgsql_repl --data-dir /var/lib/postgresql/data --cluster-name stolon-cluster --store-backend=etcdv3 --store-endpoints http://etcd-00:2379 --log-level info
     networks:
       - etcd_etcd
       - pgdb
     deploy:
       replicas: 1
-#      placement:
-#        constraints: [node.labels.nodename == node1]
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 640M
+        reservations:
+          memory: 136M
 
-  keeper2:
-    image: sorintlab/stolon:master-pg10
-    hostname: keeper2
+  stolon-keeper-2:
+    image: sorintlab/stolon:master-pg14
+    hostname: stolon-keeper-2
     environment:
-      - PGDATA=/var/lib/postgresql/data
+      PGDATA: /var/lib/postgresql/data
+      STOLONCTL_CLUSTER_NAME: stolon-cluster
+      STOLONCTL_STORE_BACKEND: etcdv3
+      STOLONCTL_STORE_ENDPOINTS: http://etcd-00:2379
     volumes:
-      - pgkeeper2:/var/lib/postgresql/data
+      - pgstolon-keeper-2:/var/lib/postgresql/data
     secrets:
       - pgsql
-    command: gosu stolon stolon-keeper --pg-listen-address keeper2 --pg-repl-username replication --uid keeper2 --pg-su-username postgres --pg-su-passwordfile /run/secrets/pgsql --pg-repl-passwordfile /run/secrets/pgsql --data-dir /var/lib/postgresql/data --cluster-name stolon-cluster --store-backend=etcdv3 --store-endpoints http://etcd-00:2379,http://etcd-01:2379,http://etcd-02:2379 --log-level debug
+    command: gosu stolon stolon-keeper --pg-listen-address stolon-keeper-2 --pg-repl-username replication --uid stolonkeeper2 --pg-su-username postgres --pg-su-passwordfile /run/secrets/pgsql --pg-repl-passwordfile /run/secrets/pgsql --data-dir /var/lib/postgresql/data --cluster-name stolon-cluster --store-backend=etcdv3 --store-endpoints http://etcd-00:2379 --log-level info
     networks:
       - etcd_etcd
       - pgdb
     deploy:
       replicas: 1
-#      placement:
-#        constraints: [node.labels.nodename == node2]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 512M
+        reservations:
+          memory: 128M
 
-  proxy:
-    image: sorintlab/stolon:master-pg10
-    command: gosu stolon stolon-proxy --listen-address 0.0.0.0 --cluster-name stolon-cluster --store-backend=etcdv3 --store-endpoints http://etcd-00:2379,http://etcd-01:2379,http://etcd-02:2379 --log-level info
+  stolon-haproxy:
+    image: vskurikhin/stolon-haproxy
+    container_name: stolon-standby-haproxy
+    privileged: true
+    hostname: stolon-standby-haproxy
     networks:
       - etcd_etcd
       - pgdb
-    ports:
-      - 5432:5432
     deploy:
-      replicas: 2
-      update_config:
-        parallelism: 1
-        delay: 30s
-        order: stop-first
-        failure_action: rollback
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          memory: 128M
+    ports:
+      - "5432:35432"
+      - "5433:45432"
+      - "18181:18181"
+    depends_on:
+      - zookeeper
+    environment:
+      STOLONCTL_CLUSTER_NAME: stolon-cluster
+      STOLONCTL_STORE_BACKEND: etcdv3
+      STOLONCTL_STORE_ENDPOINTS: http://etcd-00:2379
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys/fs/cgroup:/host/cgroup:ro
+    tmpfs:
+      - /run
+      - /tmp
 
 volumes:
-  pgkeeper1:
+  pgstolon-keeper-1:
     driver: local
-  pgkeeper2:
+  pgstolon-keeper-2:
     driver: local
 
 networks:
