@@ -15,6 +15,8 @@ services:
       - --initial-cluster=etcd-00=http://etcd-00:2380
       - --initial-cluster-state=new
       - --initial-cluster-token=${ETCD_TOKEN}
+      - --auto-compaction-retention=10
+      - --auto-compaction-mode=revision
     volumes:
       - etcd-00vol:/data.etcd
     networks:
